@@ -66,7 +66,8 @@ export async function extractText(file: File): Promise<string> {
       }
       await doc.cleanup();
       text = pages.join("\n\n");
-    } catch {
+    } catch (e) {
+      console.error("pdf extract", e);
       throw new ExtractError("Couldn't read this PDF. It may be damaged or password-protected.");
     }
     if (normalize(text).length < 10)
