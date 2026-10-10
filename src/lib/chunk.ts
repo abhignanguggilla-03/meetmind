@@ -33,7 +33,7 @@ export async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T, i: nu
     Array.from({ length: Math.min(limit, items.length) }, async () => {
       while (i < items.length) {
         const idx = i++;
-        out[idx] = await fn(items[idx], idx);
+        out[idx] = await fn(items[idx] as T, idx);
       }
     }),
   );

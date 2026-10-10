@@ -18,7 +18,7 @@ export async function streamStructured(opts: {
   schemaName: string;
   schema: Record<string, unknown>;
 }): Promise<unknown> {
-  const apiKey = process.env.LOVABLE_API_KEY;
+  const apiKey = process.env["LOVABLE_API_KEY"];
   if (!apiKey) throw new AiError("AI is not configured (missing LOVABLE_API_KEY).", 500, false);
 
   const res = await fetch(GATEWAY, {

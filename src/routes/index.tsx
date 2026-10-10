@@ -42,7 +42,7 @@ async function withRetry<T>(call: () => Promise<Out<T>>): Promise<T> {
     const r = await call();
     if (r.ok) return r.data;
     if (!r.retryable || attempt >= delays.length) throw new Error(r.error);
-    await new Promise((res) => setTimeout(res, delays[attempt] + Math.random() * 500));
+    await new Promise((res) => setTimeout(res, (delays[attempt] ?? 5000) + Math.random() * 500));
   }
 }
 
