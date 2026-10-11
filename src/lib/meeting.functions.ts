@@ -32,13 +32,26 @@ async function run<T>(fn: () => Promise<T>): Promise<Out<T>> {
   } catch (e) {
     const { AiError } = await import("./ai.server");
     if (e instanceof AiError) return { ok: false, error: e.message, retryable: e.retryable };
+    if (e instanceof z.ZodError)
+      return {
+        ok: false,
+        error: "Gemini returned an incomplete or invalid meeting analysis. Please retry.",
+        retryable: true,
+      };
     console.error("analysis error", e instanceof Error ? e.message : "unknown");
     return { ok: false, error: "Unexpected server error. Please retry.", retryable: true };
   }
 }
 
 export const analyzeTranscript = createServerFn({ method: "POST" })
-  .inputValidator(z.object({ transcript: z.string().min(20).max(MAX_CHUNK_CHARS + 2000) }))
+  .inputValidator(
+    z.object({
+      transcript: z
+        .string()
+        .min(20)
+        .max(MAX_CHUNK_CHARS + 2000),
+    }),
+  )
   .handler(({ data }): Promise<Out<FinalResult>> =>
     run(async () => {
       const { streamStructured } = await import("./ai.server");
@@ -55,7 +68,10 @@ export const analyzeTranscript = createServerFn({ method: "POST" })
 export const analyzeChunk = createServerFn({ method: "POST" })
   .inputValidator(
     z.object({
-      chunk: z.string().min(1).max(MAX_CHUNK_CHARS + 2000),
+      chunk: z
+        .string()
+        .min(1)
+        .max(MAX_CHUNK_CHARS + 2000),
       index: z.number().int().min(0),
       total: z.number().int().min(1).max(50),
     }),

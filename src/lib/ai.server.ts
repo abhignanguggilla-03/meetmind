@@ -1,6 +1,7 @@
-// Server-only: Lovable AI Gateway (Responses API) streamed structured-output call.
-const GATEWAY = "https://ai.gateway.lovable.dev/v1/responses";
-export const MODEL = "openai/gpt-6-astra";
+// Server-only: Gemini Developer API structured-output call.
+import { GoogleGenAI } from "@google/genai";
+
+export const MODEL = process.env["GEMINI_MODEL"] || "gemini-2.5-flash";
 
 export class AiError extends Error {
   constructor(
@@ -18,89 +19,78 @@ export async function streamStructured(opts: {
   schemaName: string;
   schema: Record<string, unknown>;
 }): Promise<unknown> {
-  const apiKey = process.env["LOVABLE_API_KEY"];
-  if (!apiKey) throw new AiError("AI is not configured (missing LOVABLE_API_KEY).", 500, false);
+  const apiKey = process.env["GEMINI_API_KEY"];
+  if (!apiKey)
+    throw new AiError(
+      "Gemini is not configured. Add GEMINI_API_KEY to your local .env file.",
+      500,
+      false,
+    );
 
-  const res = await fetch(GATEWAY, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Lovable-API-Key": apiKey,
-      "X-Lovable-AIG-SDK": "fetch",
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      instructions: opts.instructions,
-      input: opts.input,
-      stream: true,
-      store: false,
-      reasoning: { effort: "low" },
-      text: {
-        format: { type: "json_schema", name: opts.schemaName, strict: true, schema: opts.schema },
-      },
-    }),
-  });
-
-  if (!res.ok || !res.body) {
-    let msg = "";
-    try {
-      const j = (await res.json()) as { error?: { message?: string }; message?: string };
-      msg = j?.error?.message ?? j?.message ?? "";
-    } catch {
-      /* ignore */
-    }
-    const s = res.status;
-    const friendly =
-      s === 429
-        ? "The AI service is rate limited. Please wait a moment and retry."
-        : s === 402
-          ? msg || "AI credits are exhausted for this workspace. Add credits to continue."
-          : s === 403
-            ? msg || "AI access was denied for this workspace."
-            : s >= 500
-              ? "The AI service had a temporary problem. Please retry."
-              : msg || `AI request failed (${s}).`;
-    throw new AiError(friendly, s, s === 429 || s >= 500);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  let text = "";
-  let failure: string | null = null;
-  let refusal = false;
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let idx;
-    while ((idx = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, idx).trim();
-      buf = buf.slice(idx + 1);
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
-      try {
-        const ev = JSON.parse(data) as {
-          type?: string;
-          delta?: string;
-          error?: { message?: string };
-          response?: { error?: { message?: string } };
-        };
-        if (ev.type === "response.output_text.delta" && ev.delta) text += ev.delta;
-        else if (ev.type === "response.refusal.delta") refusal = true;
-        else if (ev.type === "response.failed" || ev.type === "error")
-          failure = ev.response?.error?.message ?? ev.error?.message ?? "AI generation failed.";
-      } catch {
-        /* partial line */
-      }
-    }
-  }
-  if (failure) throw new AiError(failure, 502, true);
-  if (refusal || !text.trim()) throw new AiError("The AI declined or returned no content.", 502, false);
   try {
-    return JSON.parse(text);
-  } catch {
-    throw new AiError("The AI returned malformed output. Please retry.", 502, true);
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: opts.input,
+      config: {
+        systemInstruction: opts.instructions,
+        responseMimeType: "application/json",
+        responseJsonSchema: opts.schema,
+        temperature: 0.1,
+      },
+    });
+    const text = response.text;
+    if (!text?.trim()) throw new AiError("Gemini returned no content. Please retry.", 502, true);
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      throw new AiError("Gemini returned malformed JSON. Please retry.", 502, true);
+    }
+  } catch (error) {
+    if (error instanceof AiError) throw error;
+
+    const details = error instanceof Error ? error.message : "";
+    const status =
+      error != null &&
+      typeof error === "object" &&
+      "status" in error &&
+      typeof error.status === "number"
+        ? error.status
+        : 0;
+    if (
+      /api.?key|invalid credential|permission denied/i.test(details) ||
+      status === 401 ||
+      status === 403
+    )
+      throw new AiError(
+        "Gemini rejected the API key. Check GEMINI_API_KEY and ensure the Gemini API is enabled.",
+        status || 403,
+        false,
+      );
+    if (status === 429)
+      throw new AiError("Gemini is rate limited. Wait a moment, then retry.", status, true);
+    if (status === 404 || /model.*not found|not supported for generatecontent/i.test(details))
+      throw new AiError(
+        `The configured Gemini model (${MODEL}) is unavailable. Check GEMINI_MODEL in .env.`,
+        status || 404,
+        false,
+      );
+    if (status >= 500)
+      throw new AiError(
+        "The Gemini service is temporarily unavailable. Please retry.",
+        status,
+        true,
+      );
+    if (status === 400)
+      throw new AiError(
+        "Gemini rejected the request. Check the configured model and retry.",
+        status,
+        false,
+      );
+    throw new AiError(
+      "Could not reach Gemini. Check your network connection and retry.",
+      503,
+      true,
+    );
   }
 }
